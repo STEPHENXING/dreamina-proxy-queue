@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.0.14">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Customer 工作台</h1>
+      <p>{{ user.username }} · 余额 <strong id="current-credits">{{ user.credits }}</strong> 积分 · 约 ¥<span id="current-credit-cny" data-rate="{{ cfg.pricing.customer_rate_cny_per_credit }}">{{ '%.2f'|format(user.credits * cfg.pricing.customer_rate_cny_per_credit) }}</span></p>
+    </div>
+    <a class="link-button" href="{{ url_for('logout') }}">退出</a>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>提交视频任务</h2>
+      <form id="task-form" class="stack">
+        <label>模型
+          <select name="model_version" id="model">
+            {% for name, model in cfg.video.models.items() %}
+            <option value="{{ name }}" data-cps="{{ model.credits_per_second }}" data-is-vip="{{ 1 if model.get('is_vip') else 0 }}">{{ model.label }} · {{ model.credits_per_second }} 积分/秒</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>时长
+          <select name="duration" id="duration">
+            {% for sec in range(cfg.video.duration_min, cfg.video.duration_max + 1) %}
+            <option value="{{ sec }}">{{ sec }} 秒</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>比例
+          <select name="ratio">
+            {% for ratio in cfg.video.supported_ratios %}
+            <option value="{{ ratio }}">{{ ratio }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="inline-check">
+          <input type="checkbox" name="queue" id="queue-check"> <span style="color: var(--accent); font-weight: 700; font-size: 1.05em;">🔥 多花一点积分，我帮你排队。。</span>
+        </label>
+        <label class="inline-check">
+          <input type="checkbox" name="text_only" id="text-only-check"> <span>纯文本生成视频，不使用参考图</span>
+        </label>
+        <label>提示词
+          <textarea name="prompt" rows="5" required></textarea>
+        </label>
+        <p class="muted" style="margin-top:-12px; font-size:0.85em;">💡 提示：如上传了参考图，请使用 <code>@img1</code>, <code>@img2</code> 引用，数量需与上传的图片对应。</p>
+        <div class="estimate">预计消耗：<strong id="credit-estimate">0</strong> 积分</div>
+        <input type="hidden" id="media-ids" name="media_ids">
+        <button type="submit">提交任务</button>
+        <p id="task-message" class="muted"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="reference-panel">
+      <div class="section-heading">
+        <h2>本次任务参考资源</h2>
+        <button type="button" id="clear-media" class="secondary-button">清空全部</button>
+      </div>
+      <div id="reference-picker" class="stack" data-max-images="{{ cfg.video.max_reference_images }}" data-max-audios="{{ cfg.video.max_reference_audios }}">
+        <label>参考图片
+          <input id="reference-images" type="file" accept="image/*" multiple>
+        </label>
+        <label>参考音频
+          <input id="reference-audios" type="file" accept="audio/*" multiple>
+        </label>
+      </div>
+      <p class="muted">这里只是为当前任务选择资源，不需要单独上传。点击“提交任务”时，系统会先上传本次用到的资源，拿到私密 URL 后再派给 Provider。</p>
+      <div id="media-list" class="media-list"></div>
+    </section>
+
+    <section class="panel wide">
+      <h2>我的任务</h2>
+      <div class="task-grid" id="task-grid" data-timeout-seconds="{{ cfg.provider.task_timeout_seconds }}">
+        {% for task in tasks %}
+          <article class="task-card" data-task-id="{{ task.task_id }}" data-created-at="{{ task.created_at }}" data-submitted-at="{{ task.submitted_at or '' }}" data-finished-at="{{ task.completed_at or task.failed_at or '' }}" data-status="{{ task.status }}" data-display-code="{{ task.display_state.code }}" data-progress-meta='{{ task.progress_meta or "" }}' data-is-queued="{{ task.is_queued or 0 }}">
+            <div class="task-card-header">
+              <div class="state-cell">
+                <span class="status status-{{ task.display_state.tone }}">{{ task.display_state.label }}</span>
+                <span class="status-detail">{{ task.display_state.detail }}</span>
+                {% if task.is_queued %}<span class="badge badge-queue">排队模式</span>{% endif %}
+              </div>
+              <div class="meta-badges">
+                <span class="badge">{{ task.model_version }}</span>
+                <span class="badge">{{ task.credits|int if task.credits == task.credits|int else task.credits }} 积分</span>
+              </div>
+            </div>
+
+            <div class="task-card-body">
+              <div class="task-card-prompt">{{ task.prompt }}</div>
+              <button type="button" class="prompt-toggle" data-action="toggle-prompt" aria-expanded="false" hidden>展开全部</button>
+              {% if task.media %}
+              <div class="task-card-media">
+                {% for m in task.media %}
+                  {% if m.kind == 'image' %}
+                    <img src="{{ m.url }}?thumb=1" alt="参考图" title="{{ m.original_name }}" loading="lazy">
+                  {% else %}
+                    <div class="audio-thumb" title="{{ m.original_name }}">🎵 {{ m.original_name }}</div>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+
+            <details class="task-card-details">
+              <summary>详情信息 (进度 / 时间 / ID)</summary>
+              <div class="details-content">
+                <div class="time-cell">
+                  <span>发起：<time datetime="{{ task.created_at }}">{{ task.created_at }}</time></span>
+                  <span>提交即梦：{% if task.submitted_at %}<time datetime="{{ task.submitted_at }}">{{ task.submitted_at }}</time>{% else %}<span class="muted">等待提交</span>{% endif %}</span>
+                  <span>返回：{% if task.completed_at or task.failed_at %}<time datetime="{{ task.completed_at or task.failed_at }}">{{ task.completed_at or task.failed_at }}</time>{% else %}<span class="muted">处理中</span>{% endif %}</span>
+                </div>
+                <div class="progress-cell">{{ task.progress or '' }}</div>
+                <div class="error-cell">{{ task.error or '' }}</div>
+                <div class="task-id-cell muted">ID: {{ task.task_id }}</div>
+              </div>
+            </details>
+
+            <div class="task-card-actions">
+              <button type="button" class="primary-button" data-action="reuse-task" data-task-id="{{ task.task_id }}">🔁 复用此任务</button>
+
+              {% if task.status == 'queued' %}
+              <button type="button" class="danger-button" data-action="cancel-task" data-task-id="{{ task.task_id }}">❌ 取消并退款</button>
+              {% endif %}
+
+              {% if task.status in ['completed', 'failed', 'rejected', 'cancelled'] %}
+              <button type="button" class="secondary-button" data-action="delete-task" data-task-id="{{ task.task_id }}">🗑️ 删除</button>
+              {% endif %}
+
+              <div class="result-cell">
+                {% if task.status == 'completed' %}
+                <a class="download-link link-button" href="{{ url_for('download_result', task_id=task.task_id) }}">⬇️ 下载</a>
+                <a class="link-button" href="{{ url_for('view_result', task_id=task.task_id) }}" target="_blank" rel="noopener">▶️ 播放</a>
+                {% endif %}
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel wide">
+      <h2>流水</h2>
+      <table>
+        <thead><tr><th>时间</th><th>类型</th><th>积分</th><th>任务</th><th>备注</th></tr></thead>
+        <tbody>
+        {% for tx in transactions %}
+          <tr><td><time datetime="{{ tx.timestamp }}">{{ tx.timestamp }}</time></td><td>{{ tx.type }}</td><td>{{ tx.credits }}</td><td>{{ tx.task_id or '' }}</td><td>{{ tx.note or '' }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=1.0.14"></script>
+</body>
+</html>

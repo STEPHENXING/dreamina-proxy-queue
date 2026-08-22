@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Admin 工作台</h1>
+      <p>用户、积分、任务与流水管理</p>
+    </div>
+    <a class="link-button" href="{{ url_for('logout') }}">退出</a>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>新增用户</h2>
+      <form action="{{ url_for('create_user') }}" method="post" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>用户名<input name="username" required></label>
+        <label>密码<input name="password" type="password" minlength="6" required></label>
+        <label>角色
+          <select name="role">
+            <option value="customer">customer</option>
+            <option value="provider">provider</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <label>初始积分<input name="credits" type="number" min="0" value="0" required></label>
+        <label>备注<input name="note" value="Admin 创建用户"></label>
+        <button type="submit">创建用户</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>调整积分</h2>
+      <form action="{{ url_for('adjust_credits') }}" method="post" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>用户
+          <select name="username">
+            {% for user in users %}
+            <option value="{{ user.username }}">{{ user.username }} · {{ user.role }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>模式
+          <select name="mode">
+            <option value="delta">增减积分</option>
+            <option value="set">设置为指定积分</option>
+          </select>
+        </label>
+        <label>积分<input name="credits" type="number" value="0" required></label>
+        <label>备注<input name="note"></label>
+        <button type="submit">提交</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Provider 授权登录 (OAuth)</h2>
+      <div class="stack" id="oauth-container">
+        <label>Provider
+          <select id="oauth-username">
+            {% for user in users if user.role == 'provider' %}
+            <option value="{{ user.username }}">{{ user.username }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button id="oauth-start-btn" type="button" onclick="startOAuth()">生成授权链接</button>
+        <div id="oauth-result" style="display:none; padding: 12px; background: var(--bg-alt); border-radius: 8px;">
+          <p>请点击下方链接，在您的浏览器中完成授权：</p>
+          <a id="oauth-link" href="#" target="_blank" style="word-break: break-all; color: var(--accent);">链接</a>
+          <div style="margin-top: 16px;">
+            <button id="oauth-check-btn" type="button" onclick="checkOAuth()">我已在浏览器同意授权</button>
+          </div>
+        </div>
+        <p id="oauth-status" style="color: var(--accent);"></p>
+      </div>
+
+      <script>
+        let currentDeviceCode = "";
+        let currentSaveDir = "";
+
+        async function startOAuth() {
+            const username = document.getElementById("oauth-username").value;
+            if (!username) return alert("请先选择 Provider");
+
+            const btn = document.getElementById("oauth-start-btn");
+            const status = document.getElementById("oauth-status");
+            const resultBox = document.getElementById("oauth-result");
+
+            btn.disabled = true;
+            status.innerText = "正在服务器生成授权链接，请稍候...";
+            resultBox.style.display = "none";
+
+            const fd = new FormData();
+            fd.append("username", username);
+            fd.append("csrf_token", "{{ csrf_token }}");
+
+            try {
+                const res = await fetch("{{ url_for('oauth_start') }}", { method: "POST", body: fd });
+                const data = await res.json();
+                if (data.ok) {
+                    if (data.already_logged_in) {
+                        status.innerText = data.message;
+                        setTimeout(() => location.reload(), 2000);
+                        return;
+                    }
+                    currentDeviceCode = data.device_code;
+                    currentSaveDir = data.save_dir;
+                    document.getElementById("oauth-link").href = data.uri;
+                    document.getElementById("oauth-link").innerText = data.uri;
+                    resultBox.style.display = "block";
+                    status.innerText = "";
+                } else {
+                    status.innerText = "错误: " + data.error;
+                }
+            } catch (err) {
+                status.innerText = "网络请求失败";
+            }
+            btn.disabled = false;
+        }
+
+        async function checkOAuth() {
+            if (!currentDeviceCode) return;
+            const username = document.getElementById("oauth-username").value;
+            const btn = document.getElementById("oauth-check-btn");
+            const status = document.getElementById("oauth-status");
+
+            btn.disabled = true;
+            status.innerText = "正在检查授权状态（最多等待20秒）...";
+
+            const fd = new FormData();
+            fd.append("username", username);
+            fd.append("csrf_token", "{{ csrf_token }}");
+            fd.append("device_code", currentDeviceCode);
+            fd.append("save_dir", currentSaveDir);
+
+            try {
+                const res = await fetch("{{ url_for('oauth_check') }}", { method: "POST", body: fd });
+                const data = await res.json();
+                if (data.ok) {
+                    status.innerText = "✅ " + data.message;
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    status.innerText = "❌ " + data.error;
+                    btn.disabled = false;
+                }
+            } catch (err) {
+                status.innerText = "❌ 网络请求失败";
+                btn.disabled = false;
+            }
+        }
+      </script>
+      {% if provider_states %}
+      <h3 style="margin-top: 16px;">当前 Provider 状态</h3>
+      <table>
+        <thead><tr><th>Provider</th><th>Cookie</th><th>SD2 运行中</th><th>SD2 Fast 运行中</th><th>冷却状态</th></tr></thead>
+        <tbody>
+        {% for prov in provider_states %}
+          <tr>
+            <td>{{ prov.username }}</td>
+            <td>{{ '✅' if prov.cookie_path else '❌ 未上传' }}</td>
+            <td>{{ prov.running_sd2 }}</td>
+            <td>{{ prov.running_sd2_fast }}</td>
+            <td>{{ '🟢 就绪' if prov.is_cooled else '🔴 冷却中' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    <section class="panel wide">
+      <h2>队列状态 Dump</h2>
+      <p class="muted">查看当前内存中各个调度队列的状态和待处理任务</p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
+        <div style="background: var(--bg-alt); padding: 12px; border-radius: 8px;">
+          <h3 style="margin-top: 0;">VIP 队列 ({{ queues_dump.vip_queue|length }})</h3>
+          <pre style="font-size: 0.85em; overflow-x: auto;">{{ queues_dump.vip_queue | tojson(indent=2) }}</pre>
+        </div>
+
+        <div style="background: var(--bg-alt); padding: 12px; border-radius: 8px;">
+          <h3 style="margin-top: 0;">SD2 队列 ({{ queues_dump.sd2_queue|length }})</h3>
+          <pre style="font-size: 0.85em; overflow-x: auto;">{{ queues_dump.sd2_queue | tojson(indent=2) }}</pre>
+        </div>
+
+        <div style="background: var(--bg-alt); padding: 12px; border-radius: 8px;">
+          <h3 style="margin-top: 0;">SD2 Fast 队列 ({{ queues_dump.sd2_fast_queue|length }})</h3>
+          <pre style="font-size: 0.85em; overflow-x: auto;">{{ queues_dump.sd2_fast_queue | tojson(indent=2) }}</pre>
+        </div>
+
+        <div style="background: var(--bg-alt); padding: 12px; border-radius: 8px; border: 1px solid var(--accent);">
+          <h3 style="margin-top: 0; color: var(--accent);">正在即梦处理中 ({{ queues_dump.dreamina_processing|length }})</h3>
+          <pre style="font-size: 0.85em; overflow-x: auto;">{{ queues_dump.dreamina_processing | tojson(indent=2) }}</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>用户</h2>
+      <table>
+        <thead><tr><th>用户名</th><th>角色</th><th>积分</th><th>充值价</th><th>提现价</th><th>操作</th></tr></thead>
+        <tbody>
+        {% for user in users %}
+          <tr>
+            <td>{{ user.username }}</td><td>{{ user.role }}</td><td>{{ user.credits }}</td>
+            <td>¥{{ '%.2f'|format(user.credits * cfg.pricing.customer_rate_cny_per_credit) }}</td>
+            <td>¥{{ '%.2f'|format(user.credits * cfg.pricing.provider_rate_cny_per_credit) }}</td>
+            <td>
+              {% if user.username != 'admin' %}
+              <form action="{{ url_for('delete_user') }}" method="post" style="display:inline;" onsubmit="return confirm('确定要删除用户 {{ user.username }} 吗？');">
+                <button type="submit" class="danger-button" style="padding: 2px 8px; font-size: 0.85em; min-width: auto; height: auto;">🗑️</button>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="username" value="{{ user.username }}">
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel wide">
+      <h2>任务</h2>
+      <table>
+        <thead><tr><th>任务</th><th>Customer</th><th>Provider</th><th>模型</th><th>积分</th><th>状态</th><th>等待信息</th><th>错误</th></tr></thead>
+        <tbody>
+        {% for task in tasks %}
+          <tr>
+            <td>{{ task.task_id }}</td><td>{{ task.customer }}</td><td>{{ task.provider or '' }}</td><td>{{ task.model_version }}</td>
+            <td>{{ task.credits }}</td>
+            <td class="state-cell">
+              <span class="status status-{{ task.display_state.tone }}">{{ task.display_state.label }}</span>
+              <span class="status-detail">{{ task.display_state.detail }}</span>
+            </td><td>{{ task.progress or '' }}</td><td>{{ task.error or '' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel wide">
+      <h2>流水</h2>
+      <form method="get" action="{{ url_for('admin_dashboard') }}" class="inline-form">
+        <input name="user" value="{{ user_filter }}" placeholder="按用户筛选">
+        <button type="submit">筛选</button>
+      </form>
+      <table>
+        <thead><tr><th>时间</th><th>用户</th><th>类型</th><th>积分</th><th>任务</th><th>备注</th></tr></thead>
+        <tbody>
+        {% for tx in transactions %}
+          <tr><td><time datetime="{{ tx.timestamp }}">{{ tx.timestamp }}</time></td><td>{{ tx.user }}</td><td>{{ tx.type }}</td><td>{{ tx.credits }}</td><td>{{ tx.task_id or '' }}</td><td>{{ tx.note or '' }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=1.0.3"></script>
+</body>
+</html>
