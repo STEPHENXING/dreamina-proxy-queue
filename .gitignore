@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.log
+data/
+.venv/
+venv/
+.env
+
+# Local credentials and deployment state
+*.pem
+*.key
+*_ed25519
+*_ed25519.pub
+ssh_*/
+*.cookie
+*cookie*.json
+
+# Generated bundles, archives, and debug captures
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*debug-package*
+*login-qr*
+
+# Local/editor and accidental OS artifacts
+.idea/
+.vscode/
+%SystemDrive%/

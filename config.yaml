@@ -1,0 +1,83 @@
+# 算力共享平台 — 系统配置文件
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  secret_key: "change-me-in-production-to-a-random-string"
+  debug: false
+
+# 数据目录（相对于项目根目录，或绝对路径）
+data_dir: "data"
+
+# 数据库
+database:
+  filename: "db.sqlite"   # 在 data_dir 下
+
+# 视频任务参数
+video:
+  duration_min: 5
+  duration_max: 15
+  supported_ratios:
+    - "16:9"
+    - "9:16"
+    - "1:1"
+    - "4:3"
+    - "3:4"
+  max_reference_images: 9
+  max_reference_audios: 3
+  # 模型定义 — credits_per_second 为基础价格
+  # lite / 排队价格 = floor(base_cps * 1.5 * duration)
+  models:
+    sd2:
+      label: "SD2"
+      credits_per_second: 3
+      concurrency: 1           # 即梦侧并发限制
+    sd2_fast:
+      label: "SD2 Fast"
+      credits_per_second: 2
+      concurrency: 1
+    sd2_vip:
+      label: "SD2 VIP"
+      credits_per_second: 14
+      concurrency: 0           # 0 = 无限并发
+      is_vip: true
+    sd2_fast_vip:
+      label: "SD2 Fast VIP"
+      credits_per_second: 11
+      concurrency: 0
+      is_vip: true
+    sd2_mini:
+      label: "SD2 Mini"
+      credits_per_second: 6
+      concurrency: 0
+      is_vip: true
+    # sd2_lite:
+    #   label: "SD2 排队版"
+    #   credits_per_second: 3
+    #   concurrency: 1
+    # sd2_fast_lite:
+    #   label: "SD2 Fast 排队版"
+    #   credits_per_second: 4
+    #   concurrency: 1
+
+# 定价（展示用）
+pricing:
+  customer_rate_cny_per_credit: 0.10
+  provider_rate_cny_per_credit: 0.05
+
+# Provider / 调度配置
+provider:
+  cooldown_seconds: 2          # 两次提交之间的最小间隔（即梦限制）
+  task_timeout_seconds: 72000    # 待处理队列中任务超时时间（秒）
+  poll_interval_seconds: 5     # 轮询即梦任务状态的间隔
+  main_loop_interval: 1        # 主循环间隔（秒）
+
+# 即梦 CLI 配置
+dreamina:
+  # stub 模式：不实际调用即梦 CLI，用于本地开发测试
+  stub_mode: false  # 测试阶段打开 stub，生产阶段关闭
+  # stub 模式下，任务多少秒后自动"完成"
+  stub_completion_seconds: 10
+  # CLI 可执行文件名
+  # Use "dreamina" when it is available on PATH, or set an absolute path locally.
+  cli_command: "dreamina"
